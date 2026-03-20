@@ -991,12 +991,12 @@ tr:last-child td{border-bottom:none;}
 
           <div class="form-group">
             <label>URL do Realtime Database *</label>
-            <input id="fb-dburl" placeholder="https://sistematresvales-default-rtdb.firebaseio.com" autocomplete="off">
+            <input id="fb-dburl" value="https://sistematresvales-default-rtdb.firebaseio.com" autocomplete="off">
             <div style="font-size:11px;color:#888;margin-top:3px">Encontrada no console Firebase → Realtime Database</div>
           </div>
           <div class="form-group">
             <label>API Key <span style="font-size:10px;font-weight:400;color:#888">(opcional — necessária se as regras exigirem autenticação)</span></label>
-            <input id="fb-apikey" placeholder="AIzaSy... (deixe em branco se o banco estiver em modo de teste)" autocomplete="off">
+            <input id="fb-apikey" value="AIzaSyC1eaTg2sXqyM9BMHZYJNCwwEydhwdVy6c" autocomplete="off">
           </div>
           <div id="fb-feedback" style="display:none;margin-bottom:12px"></div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -5593,17 +5593,34 @@ function syncAutoSaveHook() {
 }
 
 async function tentarReconexaoAuto() {
+  // Credenciais do Firebase — Sistematresvales
+  const FIREBASE_DB_URL = 'https://sistematresvales-default-rtdb.firebaseio.com';
+  const FIREBASE_API_KEY = 'AIzaSyC1eaTg2sXqyM9BMHZYJNCwwEydhwdVy6c';
+
   try {
+    // Preenche os campos do painel de sincronização
+    if(el('fb-dburl'))  el('fb-dburl').value  = FIREBASE_DB_URL;
+    if(el('fb-apikey')) el('fb-apikey').value = FIREBASE_API_KEY;
+
+    // Verifica se há credenciais salvas no localStorage (prioridade)
     const saved = localStorage.getItem('gestcom_rtdb');
-    if(!saved) return;
-    const creds = JSON.parse(saved);
-    if(!creds.dbUrl) return;
-    syncLog('Reconectando automaticamente...', 'info');
-    if(el('fb-dburl'))  el('fb-dburl').value  = creds.dbUrl;
-    if(el('fb-apikey')) el('fb-apikey').value = creds.apiKey||'';
+    if(saved) {
+      const creds = JSON.parse(saved);
+      if(creds.dbUrl) {
+        configSync.dbUrl  = creds.dbUrl;
+        configSync.apiKey = creds.apiKey || FIREBASE_API_KEY;
+        if(el('fb-dburl'))  el('fb-dburl').value  = creds.dbUrl;
+        if(el('fb-apikey')) el('fb-apikey').value = creds.apiKey || FIREBASE_API_KEY;
+      }
+    } else {
+      configSync.dbUrl  = FIREBASE_DB_URL;
+      configSync.apiKey = FIREBASE_API_KEY;
+    }
+
+    syncLog('Conectando ao Firebase automaticamente...', 'info');
     await firebaseConectar();
   } catch(e) {
-    syncLog('Reconexão automática falhou: '+e.message, 'aviso');
+    syncLog('Conexão automática falhou: '+e.message, 'aviso');
   }
 }
 
@@ -5618,3 +5635,8 @@ setTimeout(tentarReconexaoAuto, 800);
 </script>
 </body>
 </html>
+
+
+
+
+
