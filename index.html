@@ -5439,6 +5439,7 @@ function coletarDadosParaSync() {
     regrasComerciais: JSON.parse(JSON.stringify(regrasComerciais)),
     tratativas:     JSON.parse(JSON.stringify(tratativas)),
     PRODUTOS_CAT:   JSON.parse(JSON.stringify(PRODUTOS_CAT)),
+    usuarios:       JSON.parse(JSON.stringify(usuarios)),
     _ts:      Date.now(),
     _usuario: usuarioLogado?.login || 'sistema',
   };
@@ -5447,9 +5448,7 @@ function coletarDadosParaSync() {
 // ── Aplica dados recebidos ──
 function aplicarDadosDaNuvem(dados, silencioso=false) {
   if(!dados || dados._apagado) return;
-  // Só aplica se os dados da nuvem são mais recentes
   if(dados._ts && dados._ts <= _rtdbLastTs) return;
-  // Ignora atualizações do próprio usuário feitas há menos de 3s
   if(dados._usuario === usuarioLogado?.login && Date.now()-dados._ts < 3000) return;
 
   _rtdbLastTs = dados._ts || Date.now();
@@ -5464,6 +5463,16 @@ function aplicarDadosDaNuvem(dados, silencioso=false) {
   if(Array.isArray(dados.metasData))        metasData = dados.metasData;
   if(Array.isArray(dados.regrasComerciais)) regrasComerciais = dados.regrasComerciais;
   if(Array.isArray(dados.tratativas))       tratativas = dados.tratativas;
+  // Usuários — mescla da nuvem mas preserva o usuário logado atual
+  if(Array.isArray(dados.usuarios)) {
+    const loginAtual = usuarioLogado?.login;
+    usuarios = dados.usuarios;
+    // Se o usuário logado foi removido da nuvem, mantém ele localmente
+    if(loginAtual && !usuarios.find(u=>u.login===loginAtual)) {
+      const backup = {id:'USR-001',nome:'Administrador',login:'admin',senha:'admin123',perfil:'diretoria',email:'',status:'ativo',ultimoAcesso:'—'};
+      usuarios.push(backup);
+    }
+  }
   if(dados.PRODUTOS_CAT && typeof dados.PRODUTOS_CAT==='object') {
     Object.keys(PRODUTOS_CAT).forEach(k=>delete PRODUTOS_CAT[k]);
     Object.assign(PRODUTOS_CAT, dados.PRODUTOS_CAT);
