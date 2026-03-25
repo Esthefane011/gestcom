@@ -717,7 +717,7 @@ tr:last-child td{border-bottom:none;}
       </div>
       <div class="card" style="padding:0;overflow:hidden">
         <table>
-          <thead><tr><th>Cliente</th><th>Indústria</th><th>Mês</th><th>Sell In (R$)</th><th>Sell Out (R$)</th><th>Estoque Estimado</th><th>Giro %</th><th>Cobertura</th></tr></thead>
+          <thead><tr><th>Cliente</th><th>Indústria</th><th>Mês</th><th>Sell In (R$)</th><th>Sell Out (R$)</th><th>Positivação</th><th>Estoque Estimado</th><th>Giro %</th><th>Cobertura</th></tr></thead>
           <tbody id="sio-tbody"></tbody>
         </table>
       </div>
@@ -1585,6 +1585,11 @@ tr:last-child td{border-bottom:none;}
       </div>
       <div class="form-group"><label>Quantidade Vendida</label><input type="number" id="so-qtd" placeholder="0" min="0"></div>
       <div class="form-group"><label>Valor Total (R$) *</label><input type="number" id="so-valor" placeholder="0,00" min="0" step="0.01"></div>
+      <div class="form-group">
+        <label>Positivação (lojas que venderam) <span title="Quantidade de clientes/lojas que venderam pelo menos 1 unidade no período" style="cursor:help;color:#aaa;font-weight:400">ℹ️</span></label>
+        <input type="number" id="so-positivacao" placeholder="0" min="0" style="border-color:#6c3db5">
+        <div style="font-size:10px;color:#888;margin-top:3px">Nº de lojas que venderam ≥ 1 unidade no período</div>
+      </div>
       <div class="form-group full"><label>Observações</label><textarea id="so-obs" rows="2" placeholder="Informações adicionais sobre o sell out..."></textarea></div>
     </div>
     <div style="display:flex;gap:8px;justify-content:flex-end">
@@ -4211,10 +4216,11 @@ function renderSellInOut() {
         const soRows = sellOutData.filter(s=>s.cliente===cli&&s.industria===ind&&s.mes===mes);
         const sellOut = soRows.reduce((s,r)=>s+r.valor,0);
         if(sellIn===0&&sellOut===0) return;
+        const positivacao = soRows.reduce((s,r)=>s+(r.positivacao||0),0);
         const estoque = sellIn - sellOut;
         const giro = sellIn>0 ? ((sellOut/sellIn)*100).toFixed(1) : 0;
         const cobertura = sellOut>0 ? Math.round((estoque/sellOut)*30)+' dias' : '—';
-        rows.push({cli,ind,mes,sellIn,sellOut,estoque,giro,cobertura});
+        rows.push({cli,ind,mes,sellIn,sellOut,positivacao,estoque,giro,cobertura});
       });
     });
   });
@@ -4234,6 +4240,7 @@ function renderSellInOut() {
       <td><span class="pill">${r.mes}</span></td>
       <td class="bold azul">${fmt(r.sellIn)}</td>
       <td class="bold verde">${fmt(r.sellOut)}</td>
+      <td>${r.positivacao>0 ? `<span class="badge badge-roxo">🏪 ${r.positivacao} ${r.positivacao===1?'loja':'lojas'}</span>` : '<span class="badge badge-cinza">—</span>'}</td>
       <td class="${r.estoque<0?'vermelho':'bold'}">${fmt(r.estoque)}</td>
       <td><span class="pill ${parseFloat(r.giro)>=80?'amarelo':''}">${r.giro}%</span></td>
       <td>${r.cobertura}</td>
@@ -4252,15 +4259,113 @@ function salvarSellOut() {
     mes: el('so-mes').value,
     qtd: parseInt(el('so-qtd').value)||0,
     valor,
+    positivacao: parseInt(el('so-positivacao').value)||0,
     obs: el('so-obs').value||''
   });
   addAudit(usuarioLogado?.login||'sistema', `Sell Out lançado: ${cli} / ${ind} — ${fmt(valor)}`, '↕️');
+  el('so-positivacao').value = '';
   closeModal('modal-sellout');
   renderSellInOut();
   toast('Sell Out registrado com sucesso!');
 }
 
-function exportarSellInOut() { toast('Excel de Sell In/Out exportado!'); }
+function exportarSellInOut() {
+  const wb = XLSX.utils.book_new();
+
+  // ── Aba 1: Comparativo Sell In × Sell Out (todos os dados, sem filtro) ──
+  const fats = pedidos.filter(p => p.nf);
+  const allClis = [...new Set([...fats.map(p => p.cliente), ...sellOutData.map(s => s.cliente)])];
+  const allInds = [...new Set([...fats.map(p => p.industria), ...sellOutData.map(s => s.industria)])];
+  const todosMeses = [...new Set([...sellOutData.map(s => s.mes), 'Jan/26', 'Fev/26', 'Mar/26'])];
+
+  const compRows = [
+    ['Cliente', 'Indústria', 'Mês', 'Sell In (R$)', 'Sell Out (R$)', 'Positivação (lojas)', 'Estoque Estimado (R$)', 'Giro %', 'Cobertura']
+  ];
+  let totSellIn = 0, totSellOut = 0;
+
+  allClis.forEach(cli => {
+    allInds.forEach(ind => {
+      todosMeses.forEach(mes => {
+        const sellIn = fats.filter(p => p.cliente === cli && p.industria === ind)
+                           .reduce((s, p) => s + p.nf.liquida, 0);
+        const soRows = sellOutData.filter(s => s.cliente === cli && s.industria === ind && s.mes === mes);
+        const sellOut = soRows.reduce((s, r) => s + r.valor, 0);
+        if (sellIn === 0 && sellOut === 0) return;
+        const positivacao = soRows.reduce((s, r) => s + (r.positivacao || 0), 0);
+        const estoque = sellIn - sellOut;
+        const giro = sellIn > 0 ? parseFloat(((sellOut / sellIn) * 100).toFixed(1)) : 0;
+        const cobertura = sellOut > 0 ? Math.round((estoque / sellOut) * 30) + ' dias' : '—';
+        compRows.push([cli, ind, mes, sellIn, sellOut, positivacao, estoque, giro, cobertura]);
+        totSellIn  += sellIn;
+        totSellOut += sellOut;
+      });
+    });
+  });
+
+  // Linha de totais
+  const giroGeral = totSellIn > 0 ? parseFloat(((totSellOut / totSellIn) * 100).toFixed(1)) : 0;
+  compRows.push(['TOTAL GERAL', '', '', totSellIn, totSellOut, '', totSellIn - totSellOut, giroGeral, '']);
+
+  const wsComp = XLSX.utils.aoa_to_sheet(compRows);
+  // Larguras de coluna
+  wsComp['!cols'] = [
+    {wch:22},{wch:16},{wch:10},{wch:16},{wch:16},{wch:18},{wch:22},{wch:10},{wch:14}
+  ];
+  XLSX.utils.book_append_sheet(wb, wsComp, 'Comparativo');
+
+  // ── Aba 2: Sell Out Lançado (dados brutos) ──
+  const soRows2 = [['ID','Cliente','Indústria','Produto','Mês','Qtd','Valor (R$)','Positivação','Obs']];
+  sellOutData.forEach(s => soRows2.push([
+    s.id, s.cliente, s.industria, s.produto || '', s.mes,
+    s.qtd || 0, s.valor, s.positivacao || 0, s.obs || ''
+  ]));
+  const wsSO = XLSX.utils.aoa_to_sheet(soRows2);
+  wsSO['!cols'] = [{wch:10},{wch:22},{wch:16},{wch:20},{wch:10},{wch:8},{wch:14},{wch:14},{wch:30}];
+  XLSX.utils.book_append_sheet(wb, wsSO, 'Sell Out Lançado');
+
+  // ── Aba 3: Sell In — Pedidos Faturados (detalhado) ──
+  const siRows = [['Pedido','Cliente','Indústria','Data','NF Nº','Valor Bruto (R$)','Bonif. (R$)','Descontos (R$)','Valor Líquido (R$)','Status']];
+  fats.forEach(p => siRows.push([
+    p.id, p.cliente, p.industria, p.data || '',
+    p.nf.numero || '', p.nf.bruta || 0, p.nf.bonif || 0,
+    (p.nf.bruta || 0) - (p.nf.liquida || 0) - (p.nf.bonif || 0),
+    p.nf.liquida || 0, p.status
+  ]));
+  const wsSI = XLSX.utils.aoa_to_sheet(siRows);
+  wsSI['!cols'] = [{wch:12},{wch:22},{wch:16},{wch:12},{wch:12},{wch:16},{wch:14},{wch:16},{wch:16},{wch:14}];
+  XLSX.utils.book_append_sheet(wb, wsSI, 'Sell In (Pedidos Fat.)');
+
+  // ── Aba 4: KPIs Resumo ──
+  const hoje = new Date().toLocaleDateString('pt-BR');
+  const kpiRows = [
+    ['Resumo Sell In × Sell Out — GestCom Três Vales'],
+    ['Gerado em:', hoje],
+    [],
+    ['Indicador', 'Valor'],
+    ['Sell In Total (R$)', totSellIn],
+    ['Sell Out Total (R$)', totSellOut],
+    ['Giro Médio (%)', giroGeral],
+    ['Estoque Estimado (R$)', totSellIn - totSellOut],
+    [],
+    ['Qtd. Registros Sell Out', sellOutData.length],
+    ['Qtd. Pedidos Faturados (Sell In)', fats.length],
+    ['Clientes com Sell In/Out', allClis.filter(c => {
+      return fats.some(p=>p.cliente===c) || sellOutData.some(s=>s.cliente===c);
+    }).length],
+    ['Indústrias com Sell In/Out', allInds.filter(i => {
+      return fats.some(p=>p.industria===i) || sellOutData.some(s=>s.industria===i);
+    }).length],
+  ];
+  const wsKPI = XLSX.utils.aoa_to_sheet(kpiRows);
+  wsKPI['!cols'] = [{wch:30},{wch:20}];
+  XLSX.utils.book_append_sheet(wb, wsKPI, 'KPIs Resumo');
+
+  // ── Gerar arquivo ──
+  const dataStr = new Date().toISOString().slice(0,10);
+  XLSX.writeFile(wb, `SellInOut_TresVales_${dataStr}.xlsx`);
+  addAudit(usuarioLogado?.login || 'sistema', 'Exportou Sell In/Out para Excel', '📤');
+  toast('✅ Excel exportado com 4 abas: Comparativo, Sell Out, Sell In e KPIs!');
+}
 
 /* ══════════════════════════
    RELATÓRIOS / KPIs
