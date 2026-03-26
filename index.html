@@ -1915,6 +1915,12 @@ let _indEditId = null;
 let _redeEditId = null;
 
 let clienteAtual = 'coelho';
+let _mixExpandedRedes = {}; // controla quais redes estão expandidas no mix
+
+function toggleMixRede(nomeRede) {
+  _mixExpandedRedes[nomeRede] = !_mixExpandedRedes[nomeRede];
+  renderMix();
+}
 let orcItens = [];
 let pedItens = [];
 let importTipo = '';
@@ -3303,9 +3309,26 @@ function selectCliente(nomeCliente, btn) {
   const av = nomeCliente.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
   el('mix-avatar').textContent = av;
   el('mix-cliente-nome').textContent = nomeCliente;
-  el('mix-cliente-info').textContent = c ? `${c.segmento||''}${c.cnpj?' · CNPJ '+c.cnpj:''}${c.prazo?' · Prazo: '+c.prazo:''}` : '';
-  // Contar produtos do mix para este cliente
-  const prodsCli = mixProdutos.filter(p=>!p.clienteEspecifico||p.clienteEspecifico===nomeCliente);
+  // Informações adicionais: para rede mostra nº de filiais, para cliente mostra dados do cliente
+  const isRedeAtual = nomeCliente.startsWith('🔗 ');
+  const nomeRedeAtual = isRedeAtual ? nomeCliente.replace('🔗 ','') : '';
+  if(isRedeAtual) {
+    const redeObj = redes.find(r=>r.nome===nomeRedeAtual);
+    const qtdFiliais = clientes.filter(cx=>cx.rede===nomeRedeAtual).length;
+    el('mix-cliente-info').textContent = `${redeObj&&redeObj.segmento?redeObj.segmento+' · ':''}${qtdFiliais} filial${qtdFiliais!==1?'is':''} vinculada${qtdFiliais!==1?'s':''}`;
+  } else {
+    el('mix-cliente-info').textContent = c ? `${c.segmento||''}${c.cnpj?' · CNPJ '+c.cnpj:''}${c.prazo?' · Prazo: '+c.prazo:''}` : '';
+  }
+  // Contar produtos do mix para este cliente/rede
+  let prodsCli;
+  if(isRedeAtual) {
+    const filiaisAtu = clientes.filter(cx=>cx.rede===nomeRedeAtual).map(cx=>cx.nome);
+    prodsCli = mixProdutos.filter(p=> p.rede===nomeRedeAtual || filiaisAtu.includes(p.clienteEspecifico));
+  } else {
+    const cliObj = clientes.find(cx=>cx.nome===nomeCliente);
+    const redeDoCli = cliObj ? cliObj.rede : '';
+    prodsCli = mixProdutos.filter(p=> p.clienteEspecifico===nomeCliente || (redeDoCli && p.rede===redeDoCli));
+  }
   const indsSet = new Set(prodsCli.map(p=>p.ind));
   const descs = prodsCli.filter(p=>p.desc_pct>0).map(p=>p.desc_pct);
   el('mix-stat-produtos').textContent = prodsCli.length;
@@ -3315,29 +3338,67 @@ function selectCliente(nomeCliente, btn) {
 }
 
 function renderMix() {
-  // Atualiza chips de clientes E REDES dinamicamente — sempre reconstrói para garantir 100% dos cadastros
+  // Reconstrói chips: Redes com filiais colapsáveis + clientes independentes
   const chips = el('cliente-chips');
   if(chips) {
     const clientesAtivos = clientes.filter(c=>c.status==='Ativo');
     const redesAtivas = redes.filter(r=>r.status==='Ativo');
-    let chipsHtml = '';
-    // Adiciona redes primeiro
-    redesAtivas.forEach((r,i)=>{
-      const isFirst = i===0 && clientesAtivos.length===0;
-      chipsHtml += `<button class="btn ${isFirst?'btn-primary':'btn-outline'} btn-sm" style="border-color:var(--roxo);color:${isFirst?'#000':'var(--roxo)'}" onclick="selectCliente('🔗 ${esc(r.nome)}',this)">🔗 ${esc(r.nome)}</button>`;
+    // Clientes sem rede (independentes)
+    const clientesIndep = clientesAtivos.filter(c=>!c.rede);
+
+    let chipsHtml = `<div style="display:flex;flex-direction:column;gap:6px;width:100%">`;
+
+    // Bloco de redes com filiais colapsáveis
+    redesAtivas.forEach(r=>{
+      const filiaisRede = clientesAtivos.filter(c=>c.rede===r.nome);
+      const redeKey = '🔗 '+r.nome;
+      const isRedeSelected = clienteAtual === redeKey;
+      const expandido = _mixExpandedRedes && _mixExpandedRedes[r.nome];
+      chipsHtml += `
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <button class="btn ${isRedeSelected?'btn-primary':'btn-outline'} btn-sm"
+              style="border-color:var(--roxo);${isRedeSelected?'background:var(--roxo);color:#fff':'color:var(--roxo)'};font-weight:700"
+              onclick="selectCliente('${esc(redeKey)}',this)">🔗 ${esc(r.nome)}
+              <span style="font-size:10px;background:rgba(255,255,255,.2);padding:1px 5px;border-radius:10px;margin-left:4px">${filiaisRede.length}</span>
+            </button>
+            ${filiaisRede.length>0?`<button class="btn btn-outline btn-xs"
+              style="color:#888;padding:3px 8px;font-size:10px;border-color:#ddd"
+              onclick="toggleMixRede('${esc(r.nome)}')">${expandido?'▲ Recolher':'▼ Filiais'}</button>`:''}
+          </div>
+          ${expandido && filiaisRede.length>0 ? `
+            <div style="display:flex;gap:4px;flex-wrap:wrap;padding:6px 10px;background:#f9f8f5;border-radius:6px;border-left:3px solid var(--roxo);margin-left:8px">
+              ${filiaisRede.map(f=>{
+                const isFiliSelected = clienteAtual===f.nome;
+                return `<button class="btn ${isFiliSelected?'btn-primary':'btn-outline'} btn-xs"
+                  style="${isFiliSelected?'background:var(--roxo);color:#fff;border-color:var(--roxo)':'color:#666;border-color:#ccc'};font-size:10px"
+                  onclick="selectCliente('${esc(f.nome)}',this)">🏪 ${esc(f.nome)}</button>`;
+              }).join('')}
+            </div>` : ''}
+        </div>`;
     });
-    // Adiciona clientes individuais
-    clientesAtivos.forEach((c,i)=>{
-      const isFirst = i===0 && redesAtivas.length===0;
-      chipsHtml += `<button class="btn ${isFirst?'btn-primary':'btn-outline'} btn-sm" onclick="selectCliente('${esc(c.nome)}',this)">${esc(c.nome)}</button>`;
-    });
+
+    // Clientes independentes (sem rede)
+    if(clientesIndep.length>0) {
+      if(redesAtivas.length>0) {
+        chipsHtml += `<div style="font-size:10px;color:#aaa;text-transform:uppercase;letter-spacing:.5px;margin-top:2px">Clientes independentes</div>`;
+      }
+      chipsHtml += `<div style="display:flex;gap:6px;flex-wrap:wrap">`;
+      clientesIndep.forEach(c=>{
+        const isSel = clienteAtual===c.nome;
+        chipsHtml += `<button class="btn ${isSel?'btn-primary':'btn-outline'} btn-sm"
+          onclick="selectCliente('${esc(c.nome)}',this)">${esc(c.nome)}</button>`;
+      });
+      chipsHtml += `</div>`;
+    }
+
+    chipsHtml += `</div>`;
     chips.innerHTML = chipsHtml;
+
     // Seleciona o primeiro disponível se nenhum selecionado
-    if(chips.children.length > 0 && (!clienteAtual || clienteAtual==='coelho')) {
-      const first = chips.children[0];
-      first.className = first.className.replace('btn-outline','btn-primary');
-      const nome = redesAtivas.length>0 ? '🔗 '+redesAtivas[0].nome : (clientesAtivos.length>0 ? clientesAtivos[0].nome : '');
-      if(nome) { clienteAtual = nome; selectCliente(nome, first); }
+    if(!clienteAtual || clienteAtual==='coelho') {
+      const nome = redesAtivas.length>0 ? '🔗 '+redesAtivas[0].nome : (clientesIndep.length>0 ? clientesIndep[0].nome : '');
+      if(nome) { clienteAtual = nome; selectCliente(nome, null); return; }
     }
   }
 
@@ -3345,7 +3406,31 @@ function renderMix() {
   const filtInd=(el('filtro-industria-mix')||{}).value||'';
   const filtSt=(el('mix-filtro-status')||{}).value||'';
   const filtCurva=(el('mix-filtro-curva')||{}).value||'';
-  const list=mixProdutos.filter(p=>{
+
+  // Determina se o clienteAtual é uma rede (prefixo 🔗) ou cliente individual
+  const isRede = clienteAtual && clienteAtual.startsWith('🔗 ');
+  const nomeRede = isRede ? clienteAtual.replace('🔗 ','') : '';
+
+  // Encontra todas as filiais da rede selecionada (para incluir produtos de filiais)
+  const filiaisRede = isRede ? clientes.filter(c=>c.rede===nomeRede).map(c=>c.nome) : [];
+
+  const list=mixProdutos.map((p,i)=>({...p,_idx:i})).filter(p=>{
+    // Filtro por cliente/rede selecionado
+    if(clienteAtual) {
+      if(isRede) {
+        // Produto pertence à rede OU a uma filial dessa rede
+        const pertenceRede = p.rede === nomeRede;
+        const pertenceFilial = filiaisRede.includes(p.clienteEspecifico);
+        if(!pertenceRede && !pertenceFilial) return false;
+      } else {
+        // Produto do cliente específico OU da rede a que esse cliente pertence
+        const cli = clientes.find(c=>c.nome===clienteAtual);
+        const redeDoCli = cli ? cli.rede : '';
+        const pertenceCli = p.clienteEspecifico === clienteAtual;
+        const pertenceRedeDoCli = redeDoCli && p.rede === redeDoCli;
+        if(!pertenceCli && !pertenceRedeDoCli) return false;
+      }
+    }
     if(busca&&!p.cod.toLowerCase().includes(busca)&&!p.desc.toLowerCase().includes(busca))return false;
     if(filtInd&&p.ind!==filtInd)return false;
     if(filtSt==='ativo'&&!p.ativo)return false;
@@ -3355,12 +3440,16 @@ function renderMix() {
   });
   if(el('mix-count'))el('mix-count').textContent=list.length+' produto'+(list.length!==1?'s':'');
   const tbody=el('mix-tbody');if(!tbody)return;
-  tbody.innerHTML=list.map((p,i)=>{
+  tbody.innerHTML=list.map((p)=>{
+    const i=p._idx; // índice real no array mixProdutos
     const neg=p.tabela*(1-p.desc_pct/100);
     const curvaC=p.curva==='A'?'abc-a':p.curva==='B'?'abc-b':'abc-c';
+    // Etiqueta de origem (rede ou filial)
+    const origemTag = p.rede ? `<span class="badge badge-roxo" style="font-size:9px;margin-left:4px">🔗 ${esc(p.rede)}</span>` :
+                      p.clienteEspecifico ? `<span class="badge badge-cinza" style="font-size:9px;margin-left:4px">👤 ${esc(p.clienteEspecifico)}</span>` : '';
     return `<tr>
       <td class="mono" style="font-size:12px">${p.cod}</td>
-      <td>${esc(p.desc)}${!p.ativo?' <span class="badge badge-cinza" style="font-size:9px">inativo</span>':''}</td>
+      <td>${esc(p.desc)}${!p.ativo?' <span class="badge badge-cinza" style="font-size:9px">inativo</span>':''}${origemTag}</td>
       <td><span class="tag-industria">${p.ind}</span></td>
       <td><span class="${curvaC}">${p.curva}</span></td>
       <td>${fmt(p.tabela)}</td>
@@ -3386,7 +3475,7 @@ function renderMix() {
       </td>
       <td><input type="text" placeholder="—" style="width:90px;font-size:11px;padding:4px 7px;border:1px solid var(--cinza-medio);border-radius:4px"></td>
     </tr>`;
-  }).join('')||'<tr><td colspan="10" style="text-align:center;color:#aaa;padding:20px">Nenhum produto encontrado</td></tr>';
+  }).join('')||'<tr><td colspan="10" style="text-align:center;color:#aaa;padding:20px">Nenhum produto no mix para este cliente/rede</td></tr>';
 }
 
 function updateDesconto(idx,val){mixProdutos[idx].desc_pct=parseFloat(val)||0;renderMix();}
@@ -4067,7 +4156,7 @@ function popularSelectsDinamicos() {
 
   // selects de escolha (modal de criação)
   const modalCli = ['orc-cli','ped-cli','regra-cli','so-cli'];
-  const modalInd = ['orc-ind','ped-ind','meta-ind','regra-ind','so-ind','p-ind'];
+  const modalInd = ['orc-ind','ped-ind','meta-ind','regra-ind','so-ind','p-ind','mix-novo-ind'];
   const modalRede = ['c-rede','mix-novo-rede','regra-rede'];
 
   modalCli.forEach(id=>{
